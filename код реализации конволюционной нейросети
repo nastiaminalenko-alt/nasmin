@@ -1,0 +1,131 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.datasets import load_digits
+from sklearn.model_selection import train_test_split
+
+def stable_softmax(logits):
+    exp_values = np.exp(logits - np.max(logits))
+    return exp_values / np.sum(exp_values)
+
+def relu(x):
+    return np.maximum(0, x)
+
+def relu_derivative(x):
+    return (x > 0).astype(float)
+
+def flatten(matrix):
+    return matrix.flatten()
+
+def convolve(image, kernel):
+    h, w = image.shape
+    kh, kw = kernel.shape
+    output = np.zeros((h - kh + 1, w - kw + 1))
+    
+    for i in range(h - kh + 1):
+        for j in range(w - kw + 1):
+            output[i, j] = np.sum(image[i:i+kh, j:j+kw] * kernel)
+    
+    return output
+
+def pool(image, size=2, stride=2):
+    h, w = image.shape
+    pooled = np.zeros(((h - size) // stride + 1, (w - size) // stride + 1))
+    
+    for i in range(0, h - size + 1, stride):
+        for j in range(0, w - size + 1, stride):
+            patch = image[i:i+size, j:j+size]
+            pooled[i//stride, j//stride] = np.max(patch)
+    
+    return pooled
+
+class ConvolutionalNetwork:
+    def __init__(self, num_classes=10, learning_rate=0.01):
+        self.num_classes = num_classes
+        self.learning_rate = learning_rate
+        
+        self.kernel = np.random.uniform(-0.5, 0.5, (3, 3))
+        
+        self.fc_weights = np.random.uniform(-0.5, 0.5, (num_classes, 36))
+        self.fc_bias = np.random.uniform(-0.5, 0.5, num_classes)
+    
+    def forward(self, image):
+        conv_out = convolve(image, self.kernel)
+        
+        relu_out = relu(conv_out)
+        
+        pooled = pool(relu_out)
+        
+        flattened = flatten(pooled)
+        
+        logits = np.dot(self.fc_weights, flattened) + self.fc_bias
+        
+        self.last_flattened = flattened
+        self.last_logits = logits
+        probs = stable_softmax(logits)
+        return probs
+    
+    def backward(self, image, target_probs):
+        logits = self.last_logits
+        probs = stable_softmax(logits)
+        logit_grads = probs - target_probs
+        
+        fc_weight_grads = np.outer(logit_grads, self.last_flattened)
+        fc_bias_grads = logit_grads.copy()
+        
+        self.fc_weights -= self.learning_rate * fc_weight_grads
+        self.fc_bias -= self.learning_rate * fc_bias_grads
+    
+    def train_batch(self, X, Y_onehot, epochs=50):
+        for epoch in range(epochs):
+            total_loss = 0
+            for img, target in zip(X, Y_onehot):
+                probs = self.forward(img)
+                loss = -np.sum(target * np.log(probs + 1e-9))
+                total_loss += loss
+                self.backward(img, target)
+            
+            if epoch % 10 == 0:
+                print(f"Epoch {epoch}, Loss: {total_loss:.4f}")
+    
+    def predict(self, image):
+        probs = self.forward(image)
+        return np.argmax(probs)
+
+digits = load_digits()
+X_full = digits.images.astype(np.float32)  # 1797 x 8 x 8
+y_full = digits.target
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X_full, y_full, test_size=0.2, random_state=42
+)
+
+def to_one_hot(labels, num_classes=10):
+    one_hot = np.eye(num_classes)[labels]
+    return one_hot
+
+y_train_oh = to_one_hot(y_train)
+y_test_oh = to_one_hot(y_test)
+
+cnn = ConvolutionalNetwork(num_classes=10, learning_rate=0.001)
+cnn.train_batch(X_train, y_train_oh, epochs=80)
+
+correct = 0
+for img, true_label in zip(X_test, y_test):
+    pred = cnn.predict(img)
+    if pred == true_label:
+        correct += 1
+
+accuracy = correct / len(y_test)
+print(f"\nTest Accuracy: {accuracy:.2f}")
+
+def visualize_prediction(model, image, true_label):
+    predicted_label = model.predict(image)
+    
+    plt.imshow(image, cmap='gray')
+    plt.title(f'True: {true_label}, Predicted: {predicted_label}')
+    plt.show()
+
+for i in range(5):  
+    img = X_test[i]
+    true_lbl = y_test[i]
+    visualize_prediction(cnn, img, true_lbl)
