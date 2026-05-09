@@ -1,0 +1,118 @@
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+import random
+import string
+
+class TextDataset(Dataset):
+    def __init__(self, text, seq_length):
+        chars = sorted(list(set(text)))
+        self.char_to_int = {ch: i for i, ch in enumerate(chars)}
+        self.int_to_char = {i: ch for i, ch in enumerate(chars)}
+        self.vocab_size = len(chars)
+        self.seq_length = seq_length
+        self.encoded_text = [self.char_to_int[c] for c in text]
+    
+    def __len__(self):
+        return len(self.encoded_text) - self.seq_length
+    
+    def __getitem__(self, index):
+        sequence = self.encoded_text[index:index + self.seq_length]
+        target = self.encoded_text[index + self.seq_length]
+        return torch.tensor(sequence), torch.tensor(target)
+
+class MultiLayerRNN(nn.Module):
+    def __init__(self, input_size, hidden_sizes, output_size):
+        super(MultiLayerRNN, self).__init__()
+        self.layers = nn.ModuleList([
+            nn.RNNCell(input_size=input_size, hidden_size=hidden_sizes[0]),
+            *(nn.RNNCell(input_size=size, hidden_size=next_size) 
+              for size, next_size in zip(hidden_sizes[:-1], hidden_sizes[1:]))
+        ])
+        self.output_layer = nn.Linear(hidden_sizes[-1], output_size)
+        self.hidden_states = None
+    
+    def init_hidden(self, batch_size):
+        self.hidden_states = [torch.zeros(batch_size, hs) for hs in self.hidden_sizes]
+    
+    def forward(self, input_seq):
+        batch_size = input_seq.size(0)
+        if not self.hidden_states or self.hidden_states[0].size(0) != batch_size:
+            self.init_hidden(batch_size)
+        
+        for layer, state in zip(self.layers, self.hidden_states):
+            state = layer(input_seq, state)
+            input_seq = state
+        
+        output = self.output_layer(state)
+        return output, state
+
+def train(model, dataloader, optimizer, criterion, epochs=100):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.to(device)
+    
+    for epoch in range(epochs):
+        total_loss = 0
+        model.train()
+        for inputs, targets in dataloader:
+            inputs, targets = inputs.to(device), targets.to(device)
+            
+            optimizer.zero_grad()
+            outputs, _ = model(inputs)
+            loss = criterion(outputs.squeeze(), targets)
+            loss.backward()
+            optimizer.step()
+            
+            total_loss += loss.item()
+        
+        avg_loss = total_loss / len(dataloader)
+        print(f"Epoch {epoch}, Loss: {avg_loss:.4f}")
+
+def generate_text(model, dataset, start_char, length=200):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model.eval()
+    model.to(device)
+    
+    generated = [start_char]
+    current_char = start_char
+    model.init_hidden(1)
+    
+    with torch.no_grad():
+        for _ in range(length):
+            input_idx = dataset.char_to_int[current_char]
+            input_tensor = torch.tensor([[input_idx]]).to(device)
+            output, _ = model(input_tensor)
+            
+            probabilities = nn.functional.softmax(output, dim=-1).squeeze()
+            next_char_idx = torch.multinomial(probabilities, 1).item()
+            next_char = dataset.int_to_char[next_char_idx]
+            
+            generated.append(next_char)
+            current_char = next_char
+    
+    return ''.join(generated)
+
+if __name__ == "__main__":
+    # Загрузка большего текста
+    with open('large_text.txt', 'r', encoding='utf-8') as f:
+        text = f.read()
+    
+    seq_length = 50
+    input_size = len(string.printable)  # Больший словарь
+    hidden_sizes = [128, 128, 128]  # Несколько скрытых слоёв
+    output_size = len(string.printable)
+    
+    dataset = TextDataset(text, seq_length)
+    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    
+    model = MultiLayerRNN(input_size, hidden_sizes, output_size)
+
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    
+    train(model, dataloader, optimizer, criterion, epochs=200)
+    
+    generated_text = generate_text(model, dataset, start_char="H", length=500)
+    print("\nGenerated Text:\n", generated_text)
