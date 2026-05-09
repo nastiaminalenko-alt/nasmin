@@ -1,0 +1,40 @@
+import random
+
+def threshold(z):
+    return 1 if z >= 0.5 else 0
+
+class PerceptronPurePython:
+    def __init__(self, learning_rate=0.1):
+        self.learning_rate = learning_rate
+        self.weights = []
+        self.bias = 0
+
+    def fit(self, X, y, epochs=10):
+        n_features = len(X[0])
+        self.weights = [random.uniform(-0.5, 0.5) for _ in range(n_features)]
+        self.bias = random.uniform(-0.5, 0.5)
+
+        for epoch in range(epochs):
+            for x_i, target in zip(X, y):
+                linear_output = sum(w * xi for w, xi in zip(self.weights, x_i)) + self.bias
+                prediction = threshold(linear_output)
+                update = self.learning_rate * (target - prediction)
+                self.weights = [w + update * xi for w, xi in zip(self.weights, x_i)]
+                self.bias += update
+
+    def predict(self, X):
+        results = []
+        for x_i in X:
+            linear_output = sum(w * xi for w, xi in zip(self.weights, x_i)) + self.bias
+            results.append(threshold(linear_output))
+        return results
+X_or = [[1, 1], [1, 0], [0, 1], [0, 0]]
+y_or = [1, 1, 1, 0]
+
+model = PerceptronPurePython()
+model.fit(X_or, y_or)
+
+print("Результат:")
+for x, y_true in zip(X_or, y_or):
+    pred = model.predict([x])[0]
+    print(f"Вход: {x}, Истинное: {y_true}, Предсказанное: {pred}")
